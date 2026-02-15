@@ -3,8 +3,8 @@ name: VMess Server + Cloudflare Tunnel
 on:
   workflow_dispatch:
     inputs:
-      uuid: 'fccdaaae-af39-41a7-9fde-fd32a48278cf'
-        description: 'VMess UUID (kosongkan untuk auto-generate)'
+      uuid: 
+        description: 'fccdaaae-af39-41a7-9fde-fd32a48278cf'
         required: false
         default: ''
       ws_path:
