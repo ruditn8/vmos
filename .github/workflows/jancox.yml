@@ -79,63 +79,63 @@ jobs:
       # ============================================
       - name: ⚙️ Configure Xray VMess + WebSocket
         run: |
-          sudo tee /usr/local/xray/config.json > /dev/null << 'XRAYEOF'
+          sudo tee /usr/local/xray/config.json > /dev/null <<EOF
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/tmp/xray-access.log",
+    "error": "/tmp/xray-error.log"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": ${{ steps.vars.outputs.PORT }},
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
           {
-            "log": {
-              "loglevel": "warning",
-              "access": "/tmp/xray-access.log",
-              "error": "/tmp/xray-error.log"
-            },
-            "inbounds": [
-              {
-                "listen": "127.0.0.1",
-                "port": ${{ steps.vars.outputs.PORT }},
-                "protocol": "vmess",
-                "settings": {
-                  "clients": [
-                    {
-                      "id": "${{ steps.vars.outputs.UUID }}",
-                      "alterId": 0,
-                      "security": "auto"
-                    }
-                  ]
-                },
-                "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {
-                    "path": "${{ steps.vars.outputs.WS_PATH }}",
-                    "headers": {
-                      "Host": ""
-                    }
-                  }
-                },
-                "sniffing": {
-                  "enabled": true,
-                  "destOverride": ["http", "tls"]
-                }
-              }
-            ],
-            "outbounds": [
-              {
-                "protocol": "freedom",
-                "tag": "direct"
-              },
-              {
-                "protocol": "blackhole",
-                "tag": "blocked"
-              }
-            ],
-            "routing": {
-              "rules": [
-                {
-                  "type": "field",
-                  "ip": ["geoip:private"],
-                  "outboundTag": "direct"
-                }
-              ]
-            }
+            "id": "${{ steps.vars.outputs.UUID }}",
+            "alterId": 0,
+            "security": "auto"
           }
-          XRAYEOF
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "${{ steps.vars.outputs.WS_PATH }}",
+          "headers": {
+            "Host": ""
+          }
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "blocked"
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}
+EOF
 
           echo "✅ Xray configuration created"
           echo "📄 Config:"
@@ -245,3 +245,26 @@ jobs:
           # === Generate VMess Link (v2rayN format) ===
           VMESS_JSON=$(cat << EOF
           {
+            "v": "2",
+            "ps": "GitHub-VMess-CF",
+            "add": "${HOST}",
+            "port": "443",
+            "id": "${UUID}",
+            "aid": "0",
+            "scy": "auto",
+            "net": "ws",
+            "type": "none",
+            "host": "${HOST}",
+            "path": "${WS_PATH}",
+            "tls": "tls",
+            "sni": "${HOST}",
+            "alpn": "",
+            "fp": "chrome"
+          }
+          EOF
+          )
+
+          VMESS_LINK="vmess://$(echo -n "${VMESS_JSON}" | base64 -w 0)"
+
+          # === Generate Clash Config ===
+          CLASH_CONFIG=$(cat <<
