@@ -237,3 +237,5 @@ EOF
       # ============================================
       - name: 📱 Generate VMess Link & Config
         run: |
+          UUID="${{ steps.vars.outputs.UUID }}"
+          HOST
