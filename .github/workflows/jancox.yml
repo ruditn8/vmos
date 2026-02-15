@@ -89,7 +89,7 @@ jobs:
   "inbounds": [
     {
       "listen": "127.0.0.1",
-      "port": ${{ steps.vars.outputs.PORT }},
+      "port": 8080,
       "protocol": "vmess",
       "settings": {
         "clients": [
@@ -136,7 +136,6 @@ jobs:
   }
 }
 EOF
-
           echo "✅ Xray configuration created"
           echo "📄 Config:"
           cat /usr/local/xray/config.json
@@ -238,33 +237,3 @@ EOF
       # ============================================
       - name: 📱 Generate VMess Link & Config
         run: |
-          UUID="${{ steps.vars.outputs.UUID }}"
-          HOST="${TUNNEL_HOST}"
-          WS_PATH="${{ steps.vars.outputs.WS_PATH }}"
-
-          # === Generate VMess Link (v2rayN format) ===
-          VMESS_JSON=$(cat << EOF
-          {
-            "v": "2",
-            "ps": "GitHub-VMess-CF",
-            "add": "${HOST}",
-            "port": "443",
-            "id": "${UUID}",
-            "aid": "0",
-            "scy": "auto",
-            "net": "ws",
-            "type": "none",
-            "host": "${HOST}",
-            "path": "${WS_PATH}",
-            "tls": "tls",
-            "sni": "${HOST}",
-            "alpn": "",
-            "fp": "chrome"
-          }
-          EOF
-          )
-
-          VMESS_LINK="vmess://$(echo -n "${VMESS_JSON}" | base64 -w 0)"
-
-          # === Generate Clash Config ===
-          CLASH_CONFIG=$(cat <<
