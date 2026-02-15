@@ -62,15 +62,16 @@ jobs:
       - name: 📦 Install Xray-core
         run: |
           echo "⏳ Downloading Xray-core..."
-          LATEST=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d '"' -f 4)
+          # Mengambil versi terbaru dengan cara yang lebih aman
+          LATEST=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          
           echo "   Version: ${LATEST}"
-
           wget -q "https://github.com/XTLS/Xray-core/releases/download/${LATEST}/Xray-linux-64.zip" -O xray.zip
-
+          
           sudo mkdir -p /usr/local/xray
           sudo unzip -oq xray.zip -d /usr/local/xray
           sudo chmod +x /usr/local/xray/xray
-
+          
           /usr/local/xray/xray version
           echo "✅ Xray-core installed successfully"
 
@@ -79,66 +80,66 @@ jobs:
       # ============================================
       - name: ⚙️ Configure Xray VMess + WebSocket
         run: |
+          # Membuat config.json tanpa karakter escape yang salah
           sudo tee /usr/local/xray/config.json > /dev/null <<EOF
-{
-  "log": {
-    "loglevel": "warning",
-    "access": "/tmp/xray-access.log",
-    "error": "/tmp/xray-error.log"
-  },
-  "inbounds": [
-    {
-      "listen": "127.0.0.1",
-      "port": 8080,
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
           {
-            "id": "${{ steps.vars.outputs.UUID }}",
-            "alterId": 0,
-            "security": "auto"
+            "log": {
+              "loglevel": "warning",
+              "access": "/tmp/xray-access.log",
+              "error": "/tmp/xray-error.log"
+            },
+            "inbounds": [
+              {
+                "listen": "127.0.0.1",
+                "port": ${{ steps.vars.outputs.PORT }},
+                "protocol": "vmess",
+                "settings": {
+                  "clients": [
+                    {
+                      "id": "${{ steps.vars.outputs.UUID }}",
+                      "alterId": 0,
+                      "security": "auto"
+                    }
+                  ]
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "wsSettings": {
+                    "path": "${{ steps.vars.outputs.WS_PATH }}",
+                    "headers": {
+                      "Host": ""
+                    }
+                  }
+                },
+                "sniffing": {
+                  "enabled": true,
+                  "destOverride": ["http", "tls"]
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "protocol": "freedom",
+                "tag": "direct"
+              },
+              {
+                "protocol": "blackhole",
+                "tag": "blocked"
+              }
+            ],
+            "routing": {
+              "rules": [
+                {
+                  "type": "field",
+                  "ip": ["geoip:private"],
+                  "outboundTag": "blocked"
+                }
+              ]
+            }
           }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "wsSettings": {
-          "path": "${{ steps.vars.outputs.WS_PATH }}",
-          "headers": {
-            "Host": ""
-          }
-        }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls"]
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom",
-      "tag": "direct"
-    },
-    {
-      "protocol": "blackhole",
-      "tag": "blocked"
-    }
-  ],
-  "routing": {
-    "rules": [
-      {
-        "type": "field",
-        "ip": ["geoip:private"],
-        "outboundTag": "direct"
-      }
-    ]
-  }
-}
-EOF
+          EOF
+          
           echo "✅ Xray configuration created"
-          echo "📄 Config:"
-          cat /usr/local/xray/config.json
 
       # ============================================
       # STEP 4: Start Xray Server
@@ -149,9 +150,9 @@ EOF
           nohup /usr/local/xray/xray run -config /usr/local/xray/config.json > /tmp/xray.log 2>&1 &
           XRAY_PID=$!
           echo "XRAY_PID=${XRAY_PID}" >> $GITHUB_ENV
-
+          
           sleep 3
-
+          
           # Verify Xray is running
           if kill -0 $XRAY_PID 2>/dev/null; then
             echo "✅ Xray started successfully (PID: ${XRAY_PID})"
@@ -161,7 +162,7 @@ EOF
             cat /tmp/xray-error.log 2>/dev/null
             exit 1
           fi
-
+          
           # Test port
           if ss -tlnp | grep -q "${{ steps.vars.outputs.PORT }}"; then
             echo "✅ Port ${{ steps.vars.outputs.PORT }} is listening"
@@ -189,47 +190,50 @@ EOF
         id: tunnel
         run: |
           echo "⏳ Starting Cloudflare Quick Tunnel..."
-
+          
           # Start cloudflared tunnel
+          # Menghapus --protocol quic jika tidak stabil, tapi kita biarkan dulu
           nohup cloudflared tunnel \
             --url http://127.0.0.1:${{ steps.vars.outputs.PORT }} \
             --no-autoupdate \
             --edge-ip-version auto \
             --protocol quic \
             > /tmp/cloudflared.log 2>&1 &
-
+            
           CF_PID=$!
           echo "CF_PID=${CF_PID}" >> $GITHUB_ENV
-
+          
           # Wait and extract tunnel URL
           echo "⏳ Waiting for tunnel URL..."
-          MAX_WAIT=30
+          MAX_WAIT=60
           COUNTER=0
           TUNNEL_URL=""
-
+          
           while [ $COUNTER -lt $MAX_WAIT ]; do
+            # Regex diperbaiki tanpa backslash berlebih
             TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9_-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | head -1)
+            
             if [ -n "$TUNNEL_URL" ]; then
               break
             fi
+            
             sleep 2
             COUNTER=$((COUNTER + 2))
             echo "   Waiting... (${COUNTER}s)"
           done
-
+          
           if [ -z "$TUNNEL_URL" ]; then
             echo "❌ Failed to get tunnel URL!"
+            echo "📋 Cloudflared Log:"
             cat /tmp/cloudflared.log
             exit 1
           fi
-
+          
           TUNNEL_HOST=$(echo "$TUNNEL_URL" | sed 's|https://||')
-
+          
           echo "TUNNEL_URL=${TUNNEL_URL}" >> $GITHUB_ENV
           echo "TUNNEL_HOST=${TUNNEL_HOST}" >> $GITHUB_ENV
-          echo "TUNNEL_URL=${TUNNEL_URL}" >> $GITHUB_OUTPUT
-          echo "TUNNEL_HOST=${TUNNEL_HOST}" >> $GITHUB_OUTPUT
-
+          
           echo "✅ Tunnel URL: ${TUNNEL_URL}"
 
       # ============================================
@@ -238,4 +242,140 @@ EOF
       - name: 📱 Generate VMess Link & Config
         run: |
           UUID="${{ steps.vars.outputs.UUID }}"
-          HOST
+          HOST="${TUNNEL_HOST}"
+          WS_PATH="${{ steps.vars.outputs.WS_PATH }}"
+          
+          # === Generate VMess Link JSON ===
+          # Menggunakan jq untuk membuat JSON yang valid agar aman
+          VMESS_JSON=$(jq -n \
+            --arg v "2" \
+            --arg ps "GitHub-VMess-CF" \
+            --arg add "$HOST" \
+            --arg port "443" \
+            --arg id "$UUID" \
+            --arg aid "0" \
+            --arg scy "auto" \
+            --arg net "ws" \
+            --arg type "none" \
+            --arg host "$HOST" \
+            --arg path "$WS_PATH" \
+            --arg tls "tls" \
+            --arg sni "$HOST" \
+            --arg fp "chrome" \
+            '{v: $v, ps: $ps, add: $add, port: $port, id: $id, aid: $aid, scy: $scy, net: $net, type: $type, host: $host, path: $path, tls: $tls, sni: $sni, alpn: "", fp: $fp}')
+
+          # Encode ke base64 (tanpa wrapping baris)
+          VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
+
+          # === Generate Clash Config ===
+          CLASH_CONFIG=$(cat <<EOF
+          proxies:
+            - name: "GitHub-VMess-CF"
+              type: vmess
+              server: ${HOST}
+              port: 443
+              uuid: ${UUID}
+              alterId: 0
+              cipher: auto
+              udp: true
+              tls: true
+              skip-cert-verify: false
+              servername: ${HOST}
+              network: ws
+              ws-opts:
+                path: ${WS_PATH}
+                headers:
+                  Host: ${HOST}
+          EOF
+          )
+
+          # === Display Everything ===
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          🚀 VMess + Cloudflare Tunnel Ready!           ║"
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo "║                                                        ║"
+          echo "║  📡 Server Information                                 ║"
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo "  🌐 Address    : ${HOST}"
+          echo "  🔌 Port       : 443"
+          echo "  🔑 UUID       : ${UUID}"
+          echo "  🔄 AlterID    : 0"
+          echo "  🔒 Security   : auto"
+          echo "  📡 Network    : ws (WebSocket)"
+          echo "  📂 WS Path    : ${WS_PATH}"
+          echo "  🛡️  TLS        : tls"
+          echo "  📌 SNI        : ${HOST}"
+          echo "  🌍 Tunnel URL : ${TUNNEL_URL}"
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo "║  📱 VMess Link (v2rayN / v2rayNG / Nekobox)            ║"
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo ""
+          echo "${VMESS_LINK}"
+          echo ""
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo "║  🐱 Clash / Clash Meta Config                          ║"
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo ""
+          echo "${CLASH_CONFIG}"
+          echo ""
+          echo "╠══════════════════════════════════════════════════════════╣"
+          echo "║  ⏰ Server akan aktif selama ${{ github.event.inputs.keep_alive_hours }} jam               ║"
+          echo "║  ⚠️  URL berubah setiap kali workflow dijalankan        ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+
+      # ============================================
+      # STEP 8: Health Check Loop + Keep Alive
+      # ============================================
+      - name: 💓 Keep Alive & Health Monitor
+        run: |
+          HOURS=${{ github.event.inputs.keep_alive_hours }}
+          TOTAL_SECONDS=$((HOURS * 3600))
+          CHECK_INTERVAL=300
+          ELAPSED=0
+
+          echo "⏰ Server aktif selama ${HOURS} jam (${TOTAL_SECONDS} detik)"
+          echo "🔍 Health check setiap ${CHECK_INTERVAL} detik"
+          echo ""
+
+          while [ $ELAPSED -lt $TOTAL_SECONDS ]; do
+            REMAINING=$(( (TOTAL_SECONDS - ELAPSED) / 60 ))
+            
+            # Check Xray
+            if kill -0 $XRAY_PID 2>/dev/null; then
+              XRAY_STATUS="✅ Running"
+            else
+              XRAY_STATUS="❌ Down - Restarting..."
+              nohup /usr/local/xray/xray run -config /usr/local/xray/config.json > /tmp/xray.log 2>&1 &
+              XRAY_PID=$!
+            fi
+
+            # Check Cloudflared
+            if kill -0 $CF_PID 2>/dev/null; then
+              CF_STATUS="✅ Running"
+            else
+              CF_STATUS="❌ Down - Restarting..."
+              nohup cloudflared tunnel \
+                --url http://127.0.0.1:${{ steps.vars.outputs.PORT }} \
+                --no-autoupdate \
+                --protocol quic \
+                > /tmp/cloudflared.log 2>&1 &
+              
+              CF_PID=$!
+              sleep 10
+              NEW_URL=$(grep -oP 'https://[a-zA-Z0-9_-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | head -1)
+              if [ -n "$NEW_URL" ]; then
+                echo "⚠️  NEW TUNNEL URL: ${NEW_URL}"
+              fi
+            fi
+
+            CURRENT_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "[${CURRENT_TIME}] Xray: ${XRAY_STATUS} | Cloudflared: ${CF_STATUS} | Sisa: ${REMAINING} menit"
+            
+            sleep $CHECK_INTERVAL
+            ELAPSED=$((ELAPSED + CHECK_INTERVAL))
+          done
+
+          echo ""
+          echo "⏰ Waktu habis! Server dihentikan."
